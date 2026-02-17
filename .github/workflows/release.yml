@@ -26,11 +26,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
 
-      - name: Install dependencies
+      - name: Install Mojo
         run: |
-          uv pip install --system ".[dev]" --extra-index-url https://modular.gateway.scarf.sh/simple/
-          echo "--- Mojo version ---"
+          uv pip install --system modular --extra-index-url https://modular.gateway.scarf.sh/simple/
           mojo --version
+
+      - name: Install dependencies
+        run: uv pip install --system ".[dev]"
 
       - name: Install LLVM
         run: |

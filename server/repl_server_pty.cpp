@@ -13,7 +13,6 @@
 #include <chrono>
 
 #include <unistd.h>
-#include <util.h>
 #include <poll.h>
 #include <termios.h>
 #include <signal.h>
@@ -31,6 +30,7 @@
 #include <lldb/API/SBError.h>
 
 #include "json.hpp"
+#include "platform.h"
 
 using namespace lldb;
 using json = nlohmann::json;
@@ -176,7 +176,7 @@ int main(int argc, char *argv[]) {
     }
     std::string root = argv[1];
     auto entry_point = root + "/lib/mojo-repl-entry-point";
-    auto plugin_path = root + "/lib/libMojoLLDB.dylib";
+    auto plugin_path = mojo_lldb_plugin(root);
 
     setenv("MODULAR_MAX_PACKAGE_ROOT", root.c_str(), 1);
     setenv("MODULAR_MOJO_MAX_PACKAGE_ROOT", root.c_str(), 1);

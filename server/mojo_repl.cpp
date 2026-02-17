@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 
+#include "platform.h"
 #include <lldb/API/SBDebugger.h>
 #include <lldb/API/SBTarget.h>
 #include <lldb/API/SBProcess.h>
@@ -43,7 +44,7 @@ int main(int argc, char *argv[]) {
     ci.HandleCommand("settings set stop-line-count-after 0", r);
 
     // Load plugin
-    ci.HandleCommand(("plugin load " + root + "/lib/libMojoLLDB.dylib").c_str(), r);
+    ci.HandleCommand(("plugin load " + mojo_lldb_plugin(root)).c_str(), r);
     if (!r.Succeeded()) { std::cerr << "Failed to load MojoLLDB plugin\n"; return 1; }
 
     auto mojo_lang = SBLanguageRuntime::GetLanguageTypeFromString("mojo");

@@ -30,9 +30,7 @@ jobs:
 
       - name: Install Mojo
         run: |
-          uv venv
-          uv pip install modular --extra-index-url https://modular.gateway.scarf.sh/simple/
-          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+          uv tool install modular --extra-index-url https://modular.gateway.scarf.sh/simple/
           mojo --version
 
       - name: Install dependencies
@@ -46,7 +44,7 @@ jobs:
           ls ${{ matrix.llvm_include }}/lldb/API/SBDebugger.h
 
       - name: Build server
-        run: LLVM_INCLUDE=${{ matrix.llvm_include }} LLVM_LIB=${{ matrix.llvm_lib }} tools/build_server.sh
+        run: LLVM_INCLUDE=${{ matrix.llvm_include }} LLVM_LIB=${{ matrix.llvm_lib }} uv run tools/build_server.sh
 
       - name: Verify binary
         run: |
@@ -63,7 +61,7 @@ jobs:
       - name: Verify wheel
         run: |
           ls -lh dist/*.whl
-          python3 -c "
+          uv run python3 -c "
           import zipfile
           whl = sorted(__import__('glob').glob('dist/*.whl'))[0]
           print('Wheel:', whl)
@@ -88,9 +86,7 @@ jobs:
           python-version: "3.12"
       - name: Install Mojo
         run: |
-          uv venv
-          uv pip install modular --extra-index-url https://modular.gateway.scarf.sh/simple/
-          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+          uv tool install modular --extra-index-url https://modular.gateway.scarf.sh/simple/
           mojo --version
       - run: uv build --sdist -o dist/
       - uses: actions/upload-artifact@v4

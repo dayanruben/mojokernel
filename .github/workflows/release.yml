@@ -61,6 +61,17 @@ jobs:
       - name: Build wheel
         run: uv build --wheel -o dist/
 
+      - name: Fix Linux wheel platform tag
+        if: runner.os == 'Linux'
+        run: |
+          uv run pip install auditwheel patchelf
+          uv run auditwheel show dist/*.whl
+          LLDB_SO=$(patchelf --print-needed mojokernel/bin/mojo-repl-server | grep liblldb)
+          echo "Excluding: $LLDB_SO"
+          uv run auditwheel repair dist/*.whl -w dist-fixed/ --exclude "$LLDB_SO"
+          rm dist/*.whl
+          mv dist-fixed/*.whl dist/
+
       - name: Verify wheel
         run: |
           ls -lh dist/*.whl

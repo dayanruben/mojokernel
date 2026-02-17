@@ -90,12 +90,8 @@ class ServerEngine:
 
     def shutdown(self):
         if self.proc and self.proc.poll() is None:
-            try:
-                self._send({'type': 'shutdown'})
-                self.proc.wait(timeout=5)
-            except Exception:
-                self.proc.kill()
-                self.proc.wait()
+            try: self.proc.kill()
+            except Exception: pass
         self.proc = None
 
     @property

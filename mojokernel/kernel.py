@@ -54,8 +54,7 @@ class MojoKernel(Kernel):
                     'traceback': result.traceback}
 
     def do_shutdown(self, restart):
-        if restart: self.engine.restart()
-        else: self.engine.shutdown()
+        self.engine.restart() if restart else self.engine.shutdown()
         return {'status': 'ok', 'restart': restart}
 
     def do_interrupt(self):

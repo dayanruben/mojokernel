@@ -28,10 +28,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Mojo
+      - name: Detect Mojo version
         run: |
-          uv tool install modular --extra-index-url https://modular.gateway.scarf.sh/simple/
-          mojo --version
+          MOJO_VERSION=$(gh api repos/modular/mojo/releases/latest --jq .tag_name | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "MOJO_VERSION=$MOJO_VERSION" >> $GITHUB_ENV
+          echo "Mojo version: $MOJO_VERSION"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Install dependencies
         run: uv sync --dev
@@ -84,10 +87,13 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
-      - name: Install Mojo
+      - name: Detect Mojo version
         run: |
-          uv tool install modular --extra-index-url https://modular.gateway.scarf.sh/simple/
-          mojo --version
+          MOJO_VERSION=$(gh api repos/modular/mojo/releases/latest --jq .tag_name | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "MOJO_VERSION=$MOJO_VERSION" >> $GITHUB_ENV
+          echo "Mojo version: $MOJO_VERSION"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - run: uv build --sdist -o dist/
       - uses: actions/upload-artifact@v4
         with:

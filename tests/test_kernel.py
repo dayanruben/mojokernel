@@ -4,8 +4,23 @@ import mojokernel
 
 def test_version():
     v = mojokernel.__version__
-    assert re.match(r'\d+\.\d+\.\d+\.\d+', v)
-    assert v != '0.0.0.0'
+    assert re.match(r'\d+\.\d+\.\d+', v)
+    assert v != '0.0.0'
+
+def test_version_from_mojo():
+    from mojokernel._version import _get
+    v = _get()
+    assert re.match(r'\d+\.\d+\.\d+$', v)
+
+def test_version_from_env(monkeypatch):
+    monkeypatch.setenv('MOJO_VERSION', '99.0.0')
+    from mojokernel._version import _get
+    assert _get() == '99.0.0'
+
+def test_version_env_overrides_mojo(monkeypatch):
+    monkeypatch.setenv('MOJO_VERSION', '1.2.3')
+    from mojokernel._version import _get
+    assert _get() == '1.2.3'
 
 @pytest.fixture(scope='module')
 def kc():

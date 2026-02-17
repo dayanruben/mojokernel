@@ -50,15 +50,15 @@ mojokernel wheels are built against a specific Mojo version. Install the version
 
 ```bash
 # Check your Mojo version
-mojo --version          # e.g. "Mojo 0.26.1.0 (156d3ac6)"
+mojo --version          # e.g. "Mojo 0.26.1.0 (156d3ac6)" → version 26.1.0
 
 # Install matching mojokernel
-uv pip install mojokernel==0.26.1.0
+uv pip install mojokernel==26.1.0
 ```
 
 ### Publishing a new release
 
-The wheel version is determined automatically from `mojo --version` at build time (via `mojokernel/_version.py`). No manual version bumping needed.
+The wheel version is determined automatically from the latest Mojo release (via `mojokernel/_version.py`). No manual version bumping needed.
 
 When Mojo publishes a new version:
 

@@ -1,0 +1,116 @@
+name: Build and publish wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      mojo_version:
+        description: 'Mojo version constraint (e.g. ">=25.1,<25.2" or empty for latest)'
+        required: false
+        default: ''
+      publish:
+        description: 'Publish to PyPI'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            llvm_install: brew install llvm
+            llvm_include: /opt/homebrew/opt/llvm/include
+            llvm_lib: /opt/homebrew/opt/llvm/lib
+          - os: ubuntu-latest
+            llvm_install: sudo apt-get update && sudo apt-get install -y llvm-18-dev liblldb-18-dev
+            llvm_include: /usr/lib/llvm-18/include
+            llvm_lib: /usr/lib/llvm-18/lib
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Mojo
+        run: |
+          pip install modular --extra-index-url https://modular.gateway.scarf.sh/simple/
+          if [ -n "${{ inputs.mojo_version }}" ]; then
+            pip install "modular${{ inputs.mojo_version }}" --extra-index-url https://modular.gateway.scarf.sh/simple/
+          fi
+          echo "--- Mojo version ---"
+          python3 -c "from mojo._package_root import get_package_root; print('MODULAR_ROOT:', get_package_root())"
+          mojo --version || echo "mojo CLI not on PATH (ok if using pip install)"
+
+      - name: Install LLVM
+        run: |
+          ${{ matrix.llvm_install }}
+          echo "--- Verify headers ---"
+          ls ${{ matrix.llvm_include }}/lldb/Target/Target.h
+          ls ${{ matrix.llvm_include }}/lldb/API/SBDebugger.h
+
+      - name: Build server
+        run: LLVM_INCLUDE=${{ matrix.llvm_include }} LLVM_LIB=${{ matrix.llvm_lib }} tools/build_server.sh
+
+      - name: Verify binary
+        run: |
+          file mojokernel/bin/mojo-repl-server
+          if [ "$(uname)" = "Darwin" ]; then
+            otool -L mojokernel/bin/mojo-repl-server
+          else
+            ldd mojokernel/bin/mojo-repl-server
+          fi
+
+      - name: Build wheel
+        run: pip wheel . --no-deps -w dist/
+
+      - name: Verify wheel
+        run: |
+          ls -lh dist/*.whl
+          python3 -c "
+          import zipfile, sys
+          whl = sorted(__import__('glob').glob('dist/*.whl'))[0]
+          print('Wheel:', whl)
+          with zipfile.ZipFile(whl) as z:
+              for f in z.namelist():
+                  info = z.getinfo(f)
+                  if info.file_size > 1000 or 'bin/' in f:
+                      print(f'  {f}  ({info.file_size:,} bytes)')
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}
+          path: dist/*.whl
+
+  build-sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install build
+      - run: python -m build --sdist -o dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  publish:
+    if: inputs.publish
+    needs: [build, build-sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+      - run: ls -lh dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

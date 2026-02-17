@@ -31,6 +31,10 @@ def _install_kernelspec(argv):
 
 def main():
     argv = sys.argv[1:]
+    if argv and argv[0] in ('--version', '-V'):
+        from . import __version__
+        print(f'mojokernel {__version__}')
+        return
     commands = {"install": _install_kernelspec, "run": _run_kernel}
     if argv and argv[0] in commands: commands[argv[0]](argv[1:])
     else: _run_kernel(argv)

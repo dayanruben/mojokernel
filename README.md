@@ -4,58 +4,62 @@ A Jupyter kernel for [Mojo](https://www.modular.com/mojo). Supports full variabl
 
 ## Install
 
-Requires Mojo to be installed via `modular`.
+Requires Mojo to be installed. Install the wheel matching your Mojo version:
 
 ```bash
-pip install -e .
-python -m mojokernel install --sys-prefix
+pip install mojokernel
+mojokernel install --sys-prefix
 ```
 
 Then select "Mojo" in Jupyter's kernel picker.
 
-## Engines
+The pre-built wheel includes a compiled C++ server that talks directly to Mojo's LLDB -- no text parsing, fast and reliable. If the server binary isn't available for your platform, the kernel falls back to a pexpect-based engine that wraps `mojo repl`.
 
-mojokernel has two execution engines. Both support full `var`/`let` persistence, mutation, `fn`/`struct`/`trait` definitions, and proper error reporting.
+### Pexpect fallback
 
-### Pexpect engine (default)
-
-Spawns `mojo repl` as a subprocess and communicates via PTY. This is the default because it requires no compilation step -- it works as soon as `mojo` is on your PATH.
-
-- Uses `pexpect` to manage the REPL process
-- Parses REPL output to extract results and detect errors
-- Suppresses REPL UI noise via LLDB settings (`show-statusline`, `use-color`, etc.)
-
-### C++ server engine
-
-A compiled C++ binary that links directly against Modular's LLDB and uses `SBTarget::EvaluateExpression()` with REPL mode enabled. Communicates via JSON protocol on stdin/stdout.
-
-- No text parsing -- structured API responses
-- ~4x faster than pexpect for expression evaluation
-- Requires compilation: `tools/build_server.sh`
-- Requires brew LLVM headers: `brew install llvm`
-
-To use the server engine:
+The pexpect engine is used automatically if the C++ server binary isn't present (e.g. when installing from the sdist). It spawns `mojo repl` and parses its output. To force pexpect mode:
 
 ```bash
+MOJO_KERNEL_ENGINE=pexpect jupyter lab
+```
+
+### Building from source
+
+To build the C++ server yourself (e.g. for development or an unsupported platform):
+
+```bash
+brew install llvm   # macOS; on Linux: apt install llvm-18-dev liblldb-18-dev
 tools/build_server.sh
-MOJO_KERNEL_ENGINE=server jupyter lab
 ```
 
 ### PTY server (backup)
 
-A third engine variant (`server/repl_server_pty.cpp`) uses `SBDebugger::RunREPL()` in a background thread with I/O redirected through a PTY pair. This is a fallback in case the `EvaluateExpression` approach breaks in a future Modular release. It works identically to the pexpect engine but as a self-contained C++ binary.
+A third engine variant (`server/repl_server_pty.cpp`) uses `SBDebugger::RunREPL()` with PTY I/O redirection. This is a fallback in case the `EvaluateExpression` approach breaks in a future Modular release.
 
-## Building the C++ server
+## Releases
+
+mojokernel wheels are built against a specific Mojo version. Install the version matching your Mojo:
 
 ```bash
-brew install llvm
-tools/build_server.sh
+# Check your Mojo version
+mojo --version          # e.g. "Mojo 0.26.2.0.dev2026021605 (eb42a2ba)"
+
+# Install matching mojokernel
+pip install mojokernel==0.26.2
 ```
 
-This produces:
-- `build/mojo-repl-server` -- the main server (EvaluateExpression + REPL mode)
-- `build/mojo-repl` -- thin REPL wrapper used by pexpect engine tests
-- `build/mojo-repl-server-pty` -- PTY-based backup server
+### Publishing a new release
+
+When Mojo publishes a new version:
+
+1. Get the Mojo version: `mojo --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'`
+2. Update `version` in `pyproject.toml` to match (e.g. `0.26.2`)
+3. Commit and push
+4. Go to Actions > "Build and publish wheels" > Run workflow
+   - Set `publish: true` to upload to PyPI
+   - Optionally set a `mojo_version` constraint to pin the CI install
+
+Platform wheels are built for macOS (Apple Silicon) and Linux (x86_64).
 
 ## Testing
 

@@ -1,1 +1,2 @@
-"""Jupyter kernel for Mojo."""
+from importlib.metadata import version
+__version__ = version('mojokernel')

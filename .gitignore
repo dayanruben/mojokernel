@@ -32,6 +32,9 @@ __pycache__/
 # C extensions
 *.so
 
+# Built binary (copied by build_server.sh for wheel packaging)
+mojokernel/bin/
+
 # Distribution / packaging
 .Python
 env/

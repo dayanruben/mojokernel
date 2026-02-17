@@ -17,12 +17,16 @@ class MojoKernel(Kernel):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        if os.environ.get('MOJO_KERNEL_ENGINE') == 'server':
-            from .engines.server_engine import ServerEngine
-            self.engine = ServerEngine()
-        else:
+        if os.environ.get('MOJO_KERNEL_ENGINE') == 'pexpect':
             from .engines.pexpect_engine import PexpectEngine
             self.engine = PexpectEngine()
+        else:
+            from .engines.server_engine import ServerEngine, _find_server_binary
+            if _find_server_binary():
+                self.engine = ServerEngine()
+            else:
+                from .engines.pexpect_engine import PexpectEngine
+                self.engine = PexpectEngine()
         self.engine.start()
 
     def do_execute(self, code, silent, store_history=True,

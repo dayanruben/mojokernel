@@ -9,7 +9,8 @@ def _find_modular_root():
 
 
 def _find_server_binary():
-    """Find the mojo-repl-server binary, checking build dir then PATH."""
+    pkg_bin = Path(__file__).resolve().parent.parent / "bin" / "mojo-repl-server"
+    if pkg_bin.exists(): return str(pkg_bin)
     build_dir = Path(__file__).resolve().parents[2] / "build"
     p = build_dir / "mojo-repl-server"
     if p.exists(): return str(p)

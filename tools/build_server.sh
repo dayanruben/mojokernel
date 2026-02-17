@@ -1,16 +1,31 @@
 #!/bin/bash
 set -e
 cd "$(dirname "$0")/.."
-MODULAR_ROOT="$(.venv/bin/python3 -c 'from mojo._package_root import get_package_root; print(get_package_root())')"
-LLVM_INCLUDE="${LLVM_INCLUDE:-/opt/homebrew/opt/llvm/include}"
+MODULAR_ROOT="${MODULAR_ROOT:-$(python3 -c 'from mojo._package_root import get_package_root; print(get_package_root())')}"
+
+if [ "$(uname)" = "Darwin" ]; then
+    LLVM_INCLUDE="${LLVM_INCLUDE:-/opt/homebrew/opt/llvm/include}"
+    LLVM_LIB="${LLVM_LIB:-/opt/homebrew/opt/llvm/lib}"
+    LLDB_LIB=$(basename "$MODULAR_ROOT"/lib/liblldb*.dylib .dylib | sed 's/^lib//')
+else
+    LLVM_INCLUDE="${LLVM_INCLUDE:-/usr/lib/llvm-18/include}"
+    LLVM_LIB="${LLVM_LIB:-/usr/lib/llvm-18/lib}"
+    LLDB_LIB=$(basename "$MODULAR_ROOT"/lib/liblldb*.so | sed 's/^lib//;s/\.so$//')
+fi
+
+echo "MODULAR_ROOT=$MODULAR_ROOT"
+echo "LLDB_LIB=$LLDB_LIB"
 
 mkdir -p build
-LLVM_LIB="${LLVM_LIB:-/opt/homebrew/opt/llvm/lib}"
-BASE="-std=c++17 -I$LLVM_INCLUDE -L$MODULAR_ROOT/lib -llldb23.0.0git"
+BASE="-std=c++17 -I$LLVM_INCLUDE -L$MODULAR_ROOT/lib -l$LLDB_LIB"
 LLVM_LIBS="-L$LLVM_LIB -lLLVMSupport -lLLVMDemangle"
 
 c++ $BASE $LLVM_LIBS -o build/mojo-repl-server server/repl_server.cpp
 echo "Built build/mojo-repl-server"
+
+mkdir -p mojokernel/bin
+cp build/mojo-repl-server mojokernel/bin/
+echo "Copied to mojokernel/bin/"
 
 c++ $BASE -o build/mojo-repl server/mojo_repl.cpp
 echo "Built build/mojo-repl"

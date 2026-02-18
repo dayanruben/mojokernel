@@ -16,6 +16,8 @@ jobs:
   build:
     strategy:
       matrix:
+        os: [macos-14, ubuntu-22.04]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - os: macos-14
             llvm_install: brew install llvm
@@ -33,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Detect Mojo version
         run: |
@@ -95,7 +97,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.os }}
+          name: wheel-${{ matrix.os }}-${{ matrix.python-version }}
           path: dist/*.whl
 
   build-sdist:

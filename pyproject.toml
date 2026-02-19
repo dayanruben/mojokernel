@@ -12,7 +12,7 @@ dependencies = [
     "ipykernel>=6.0",
     "pexpect>=4.0",
     "jupyter-client>=8.8.0",
-    "modular",
+    "mojo",
 ]
 
 [project.optional-dependencies]
@@ -39,9 +39,3 @@ markers = ["slow: long-running or optional tests (e.g. pexpect fallback engine)"
 [project.scripts]
 mojokernel = "mojokernel.__main__:main"
 
-[tool.uv.sources]
-modular = { index = "modular" }
-
-[[tool.uv.index]]
-name = "modular"
-url = "https://modular.gateway.scarf.sh/simple/"

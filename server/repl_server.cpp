@@ -45,6 +45,8 @@ static std::string drain(SBProcess &proc, size_t (SBProcess::*fn)(char*, size_t)
     return out;
 }
 
+// Drain LLDB debugger output captured in a temp file. The file is truncated
+// after each read so later responses only include new REPL output.
 static std::string drain_file(FILE *file) {
     if (!file) return "";
 
@@ -64,6 +66,7 @@ static std::string drain_file(FILE *file) {
     return out;
 }
 
+// Collect output from both LLDB's REPL stream and the launched Mojo process.
 struct OutputCapture {
     FILE *debugger_stdout = nullptr;
     FILE *debugger_stderr = nullptr;
@@ -104,6 +107,8 @@ static std::vector<std::string> split_lines(const std::string &s) {
     return lines;
 }
 
+// SBTarget does not expose Target::GetREPL publicly. This depends on SBTarget's
+// current layout storing TargetSP as its first/only data member.
 static TargetSP get_target_sp(SBTarget &target) {
     return *reinterpret_cast<TargetSP *>(&target);
 }
@@ -246,6 +251,10 @@ int main(int argc, char *argv[]) {
         resp["id"] = id;
         std::cout << resp << "\n" << std::flush;
     }
+
+    io_handler.reset();
+    repl.reset();
+    target_sp.reset();
 
     process.Destroy();
     SBDebugger::Destroy(debugger);

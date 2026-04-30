@@ -1,4 +1,4 @@
-// Mojo REPL server using EvaluateExpression with REPL mode enabled.
+// Mojo REPL server using Modular's LLDB REPL object.
 // This gives full var/let persistence without PTY or text parsing.
 // JSON protocol on stdin/stdout.
 
@@ -7,19 +7,22 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <unistd.h>
+#include <utility>
+#include <vector>
 
 #include <lldb/API/SBDebugger.h>
 #include <lldb/API/SBTarget.h>
 #include <lldb/API/SBProcess.h>
 #include <lldb/API/SBBreakpoint.h>
-#include <lldb/API/SBExpressionOptions.h>
-#include <lldb/API/SBValue.h>
 #include <lldb/API/SBLanguageRuntime.h>
 #include <lldb/API/SBCommandInterpreter.h>
 #include <lldb/API/SBCommandReturnObject.h>
 #include <lldb/API/SBError.h>
+#include <lldb/Expression/REPL.h>
+#include <lldb/Utility/Status.h>
 
-// Internal header for EvaluateExpressionOptions::SetREPLEnabled
+// Internal header for Target::GetREPL.
 #include <lldb/Target/Target.h>
 
 #include "json.hpp"
@@ -42,6 +45,57 @@ static std::string drain(SBProcess &proc, size_t (SBProcess::*fn)(char*, size_t)
     return out;
 }
 
+static std::string drain_file(FILE *file) {
+    if (!file) return "";
+
+    fflush(file);
+    clearerr(file);
+    fseek(file, 0, SEEK_SET);
+
+    std::string out;
+    char buf[65536];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), file)) > 0)
+        out.append(buf, n);
+
+    ftruncate(fileno(file), 0);
+    fseek(file, 0, SEEK_SET);
+    clearerr(file);
+    return out;
+}
+
+struct OutputCapture {
+    FILE *debugger_stdout = nullptr;
+    FILE *debugger_stderr = nullptr;
+
+    static OutputCapture Create() {
+        OutputCapture capture{std::tmpfile(), std::tmpfile()};
+        if (!capture.debugger_stdout || !capture.debugger_stderr)
+            die("Failed to create debugger output temp files");
+        return capture;
+    }
+
+    void AttachTo(SBDebugger &debugger) {
+        debugger.SetOutputFileHandle(debugger_stdout, false);
+        debugger.SetErrorFileHandle(debugger_stderr, false);
+    }
+
+    void Clear(SBProcess &process) {
+        drain(process, &SBProcess::GetSTDOUT);
+        drain(process, &SBProcess::GetSTDERR);
+        drain_file(debugger_stdout);
+        drain_file(debugger_stderr);
+    }
+
+    std::pair<std::string, std::string> Collect(SBProcess &process) {
+        auto out = drain_file(debugger_stdout);
+        out += drain(process, &SBProcess::GetSTDOUT);
+        auto err = drain_file(debugger_stderr);
+        err += drain(process, &SBProcess::GetSTDERR);
+        return {out, err};
+    }
+};
+
 static std::vector<std::string> split_lines(const std::string &s) {
     std::vector<std::string> lines;
     std::istringstream ss(s);
@@ -50,41 +104,39 @@ static std::vector<std::string> split_lines(const std::string &s) {
     return lines;
 }
 
-// Access internal EvaluateExpressionOptions from SBExpressionOptions.
-// SBExpressionOptions has a single member: unique_ptr<EvaluateExpressionOptions>.
-static lldb_private::EvaluateExpressionOptions& get_internal(SBExpressionOptions &opts) {
-    return **reinterpret_cast<std::unique_ptr<lldb_private::EvaluateExpressionOptions>*>(&opts);
+static TargetSP get_target_sp(SBTarget &target) {
+    return *reinterpret_cast<TargetSP *>(&target);
 }
 
 static json handle_execute(const std::string &code,
-                           SBTarget &target,
-                           SBProcess &process,
-                           SBExpressionOptions &opts) {
+                            SBProcess &process,
+                            IOHandlerSP &io_handler,
+                            REPLSP &repl,
+                            OutputCapture &capture) {
     if (code.empty())
         return {{"status", "ok"}, {"stdout", ""}, {"stderr", ""}, {"value", ""}};
 
-    auto result = target.EvaluateExpression(code.c_str(), opts);
-    auto out = drain(process, &SBProcess::GetSTDOUT);
-    auto serr = drain(process, &SBProcess::GetSTDERR);
+    capture.Clear(process);
 
-    auto err = result.GetError();
-    // Mojo EvaluateExpression always reports "unknown error" even on success.
-    // Real errors have actual error messages.
-    bool is_real_error = err.Fail() && err.GetCString() &&
-                         std::string(err.GetCString()) != "unknown error";
+    std::string mutable_code = code;
+    repl->IOHandlerInputComplete(*io_handler, mutable_code);
 
-    if (is_real_error) {
-        std::string emsg = err.GetCString();
-        auto tb = split_lines(emsg);
-        return {{"status", "error"}, {"stdout", out}, {"stderr", serr},
+    auto [out, serr] = capture.Collect(process);
+
+    if (!serr.empty()) {
+        auto tb = split_lines(serr);
+        return {{"status", "error"},
+                {"stdout", out},
+                {"stderr", serr},
                 {"ename", "MojoError"},
-                {"evalue", tb.empty() ? emsg : tb[0]},
+                {"evalue", tb.empty() ? serr : tb[0]},
                 {"traceback", tb}};
     }
 
-    std::string val;
-    if (result.GetValue()) val = result.GetValue();
-    return {{"status", "ok"}, {"stdout", out}, {"stderr", serr}, {"value", val}};
+    return {{"status", "ok"},
+            {"stdout", out},
+            {"stderr", serr},
+            {"value", ""}};
 }
 
 int main(int argc, char *argv[]) {
@@ -107,6 +159,9 @@ int main(int argc, char *argv[]) {
 
     debugger.SetScriptLanguage(eScriptLanguageNone);
     debugger.SetAsync(false);
+
+    auto output_capture = OutputCapture::Create();
+    output_capture.AttachTo(debugger);
 
     auto ci = debugger.GetCommandInterpreter();
     SBCommandReturnObject cmd_result;
@@ -145,14 +200,13 @@ int main(int argc, char *argv[]) {
     drain(process, &SBProcess::GetSTDOUT);
     drain(process, &SBProcess::GetSTDERR);
 
-    // Set up expression options with REPL mode for var persistence
-    SBExpressionOptions opts;
-    opts.SetLanguage(mojo_lang);
-    opts.SetUnwindOnError(false);
-    opts.SetGenerateDebugInfo(true);
-    opts.SetTimeoutInMicroSeconds(0);
-    get_internal(opts).SetREPLEnabled(true);
+    lldb_private::Status repl_err;
+    TargetSP target_sp = get_target_sp(target);
+    REPLSP repl = target_sp->GetREPL(repl_err, mojo_lang, nullptr, true);
+    if (!repl) die("Failed to get REPL: " + std::string(repl_err.AsCString()));
+    IOHandlerSP io_handler = repl->GetIOHandler();
     std::cerr << "REPL mode enabled\n";
+    output_capture.Clear(process);
 
     std::cout << json{{"status", "ready"}} << "\n" << std::flush;
 
@@ -174,7 +228,8 @@ int main(int argc, char *argv[]) {
 
         json resp;
         if (type == "execute") {
-            resp = handle_execute(req.value("code", ""), target, process, opts);
+            resp = handle_execute(req.value("code", ""), process, io_handler, repl,
+                                  output_capture);
         } else if (type == "complete") {
             resp = {{"status", "ok"}, {"completions", json::array()}};
         } else if (type == "interrupt") {

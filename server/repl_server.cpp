@@ -107,8 +107,8 @@ static std::vector<std::string> split_lines(const std::string &s) {
     return lines;
 }
 
-// SBTarget does not expose Target::GetREPL publicly. This depends on SBTarget's
-// current layout storing TargetSP as its first/only data member.
+// Access internal TargetSP from SBTarget.
+// SBTarget has a single member: TargetSP m_opaque_sp.
 static TargetSP get_target_sp(SBTarget &target) {
     return *reinterpret_cast<TargetSP *>(&target);
 }
@@ -130,18 +130,13 @@ static json handle_execute(const std::string &code,
 
     if (!serr.empty()) {
         auto tb = split_lines(serr);
-        return {{"status", "error"},
-                {"stdout", out},
-                {"stderr", serr},
+        return {{"status", "error"}, {"stdout", out}, {"stderr", serr},
                 {"ename", "MojoError"},
                 {"evalue", tb.empty() ? serr : tb[0]},
                 {"traceback", tb}};
     }
 
-    return {{"status", "ok"},
-            {"stdout", out},
-            {"stderr", serr},
-            {"value", ""}};
+    return {{"status", "ok"}, {"stdout", out}, {"stderr", serr}, {"value", ""}};
 }
 
 int main(int argc, char *argv[]) {

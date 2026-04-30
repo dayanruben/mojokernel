@@ -36,10 +36,6 @@ static EvaluateExpressionOptions& get_internal(SBExpressionOptions &opts) {
     return **ptr;
 }
 
-static lldb::TargetSP get_target_sp(lldb::SBTarget &target) {
-    return *reinterpret_cast<lldb::TargetSP *>(&target);
-}
-
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: test-repl-mode <modular-root>\n";

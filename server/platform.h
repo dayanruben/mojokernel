@@ -14,3 +14,11 @@ inline std::string mojo_lldb_plugin(const std::string &root) {
     return root + "/lib/libMojoLLDB.so";
 #endif
 }
+
+inline std::string mojo_jupyter_library(const std::string &root) {
+#ifdef __APPLE__
+    return root + "/lib/libMojoJupyter.dylib";
+#else
+    return root + "/lib/libMojoJupyter.so";
+#endif
+}

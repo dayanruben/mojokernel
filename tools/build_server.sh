@@ -55,6 +55,6 @@ c++ $CFLAGS server/repl_server_pty.cpp $BASE_LD -o build/mojo-repl-server-pty
 echo "Built build/mojo-repl-server-pty"
 
 if [ -f server/test_jupyter_lib.cpp ]; then
-    c++ $CFLAGS server/test_jupyter_lib.cpp $BASE_LD -o build/test-jupyter-lib
+    c++ $CFLAGS server/test_jupyter_lib.cpp $BASE_LD -L$LLVM_LIB -lLLVMSupport -lLLVMDemangle -o build/test-jupyter-lib
     echo "Built build/test-jupyter-lib"
 fi

@@ -13,6 +13,13 @@
 #include <lldb/API/SBCommandReturnObject.h>
 #include <lldb/API/SBLanguageRuntime.h>
 #include <lldb/API/SBError.h>
+#include <lldb/Expression/REPL.h>
+#include <lldb/Utility/Status.h>
+
+// Internal header for Target::GetREPL.
+#include <lldb/Target/Target.h>
+
+#include "platform.h"
 
 using namespace lldb;
 
@@ -24,6 +31,12 @@ static std::string drain(SBProcess &proc, size_t (SBProcess::*fn)(char*, size_t)
     return out;
 }
 
+// SBTarget does not expose Target::GetREPL publicly. This depends on SBTarget's
+// current layout storing TargetSP as its first/only data member.
+static TargetSP get_target_sp(SBTarget &target) {
+    return *reinterpret_cast<TargetSP *>(&target);
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: test-jupyter-lib <modular-root>\n";
@@ -31,8 +44,8 @@ int main(int argc, char *argv[]) {
     }
     std::string root = argv[1];
     auto entry_point = root + "/lib/mojo-repl-entry-point";
-    auto plugin_path = root + "/lib/libMojoLLDB.dylib";
-    auto jupyter_path = root + "/lib/libMojoJupyter.dylib";
+    auto plugin_path = mojo_lldb_plugin(root);
+    auto jupyter_path = mojo_jupyter_library(root);
 
     setenv("MODULAR_MAX_PACKAGE_ROOT", root.c_str(), 1);
     setenv("MODULAR_MOJO_MAX_PACKAGE_ROOT", root.c_str(), 1);
@@ -65,7 +78,7 @@ int main(int argc, char *argv[]) {
     drain(process, &SBProcess::GetSTDERR);
 
     // Load libMojoJupyter
-    std::cout << "\n--- Loading libMojoJupyter.dylib ---\n";
+    std::cout << "\n--- Loading " << jupyter_path << " ---\n";
     void *handle = dlopen(jupyter_path.c_str(), RTLD_NOW);
     if (!handle) {
         std::cout << "dlopen failed: " << dlerror() << "\n";
@@ -73,45 +86,63 @@ int main(int argc, char *argv[]) {
     }
     std::cout << "dlopen succeeded!\n";
 
-    // Try evaluating with EvaluateExpression - does var persistence change?
-    SBExpressionOptions opts;
-    opts.SetLanguage(mojo_lang);
-    opts.SetUnwindOnError(false);
-    opts.SetGenerateDebugInfo(true);
-    opts.SetTimeoutInMicroSeconds(0);
+    // Prepare the real Mojo REPL object before the experiments below. Feeding
+    // code through its IOHandler preserves REPL variables.
+    lldb_private::Status repl_err;
+    TargetSP target_sp = get_target_sp(target);
+    REPLSP repl = target_sp->GetREPL(repl_err, mojo_lang, nullptr, true);
+    if (!repl) {
+        std::cout << "GetREPL failed: " << repl_err.AsCString() << "\n";
+        process.Destroy();
+        SBDebugger::Destroy(debugger);
+        SBDebugger::Terminate();
+        dlclose(handle);
+        return 1;
+    }
+    IOHandlerSP io_handler = repl->GetIOHandler();
+    std::cout << "GetREPL succeeded; IOHandler ready\n";
+    drain(process, &SBProcess::GetSTDOUT);
+    drain(process, &SBProcess::GetSTDERR);
 
     std::cout << "\n--- Test 1: var declaration ---\n";
-    auto v1 = target.EvaluateExpression("var _jtest = 42", opts);
+    std::string code1 = "var _jtest = 42";
+    repl->IOHandlerInputComplete(*io_handler, code1);
     auto out1 = drain(process, &SBProcess::GetSTDOUT);
-    auto e1 = v1.GetError();
-    std::cout << "Error: " << (e1.Fail() ? "yes" : "no")
-              << " msg: " << (e1.GetCString() ? e1.GetCString() : "(null)")
-              << " stdout: [" << out1 << "]\n";
+    auto err1 = drain(process, &SBProcess::GetSTDERR);
+    std::cout << "Succeeded: " << (err1.empty() ? "yes" : "no") << "\n";
+    std::cout << "stdout: [" << out1 << "]"
+              << " stderr: [" << err1 << "]\n";
 
     std::cout << "\n--- Test 2: use var ---\n";
-    auto v2 = target.EvaluateExpression("print(_jtest)", opts);
+    std::string code2 = "print(_jtest)";
+    repl->IOHandlerInputComplete(*io_handler, code2);
     auto out2 = drain(process, &SBProcess::GetSTDOUT);
-    auto e2 = v2.GetError();
-    std::cout << "Error: " << (e2.Fail() ? "yes" : "no")
-              << " msg: " << (e2.GetCString() ? e2.GetCString() : "(null)")
-              << " stdout: [" << out2 << "]\n";
+    auto err2 = drain(process, &SBProcess::GetSTDERR);
+    std::cout << "Succeeded: " << (err2.empty() ? "yes" : "no") << "\n";
+    std::cout << "stdout: [" << out2 << "]"
+              << " stderr: [" << err2 << "]\n";
 
-    // Also try HandleCommand
-    std::cout << "\n--- Test 3: HandleCommand var ---\n";
-    SBCommandReturnObject r3;
-    ci.HandleCommand("expression -l mojo -- var _jtest2 = 99", r3);
+    std::cout << "\n--- Test 3: var mutation ---\n";
+    std::string code3 = "_jtest = 99";
+    repl->IOHandlerInputComplete(*io_handler, code3);
     auto out3 = drain(process, &SBProcess::GetSTDOUT);
-    std::cout << "Succeeded: " << r3.Succeeded()
-              << " output: [" << (r3.GetOutput() ? r3.GetOutput() : "") << "]"
-              << " stdout: [" << out3 << "]\n";
+    auto err3 = drain(process, &SBProcess::GetSTDERR);
+    std::cout << "Succeeded: " << (err3.empty() ? "yes" : "no") << "\n";
+    std::cout << "stdout: [" << out3 << "]"
+              << " stderr: [" << err3 << "]\n";
 
-    std::cout << "\n--- Test 4: HandleCommand use var ---\n";
-    SBCommandReturnObject r4;
-    ci.HandleCommand("expression -l mojo -- print(_jtest2)", r4);
+    std::cout << "\n--- Test 4: use mutated var ---\n";
+    std::string code4 = "print(_jtest)";
+    repl->IOHandlerInputComplete(*io_handler, code4);
     auto out4 = drain(process, &SBProcess::GetSTDOUT);
-    std::cout << "Succeeded: " << r4.Succeeded()
-              << " output: [" << (r4.GetOutput() ? r4.GetOutput() : "") << "]"
-              << " stdout: [" << out4 << "]\n";
+    auto err4 = drain(process, &SBProcess::GetSTDERR);
+    std::cout << "Succeeded: " << (err4.empty() ? "yes" : "no") << "\n";
+    std::cout << "stdout: [" << out4 << "]"
+              << " stderr: [" << err4 << "]\n";
+
+    io_handler.reset();
+    repl.reset();
+    target_sp.reset();
 
     process.Destroy();
     SBDebugger::Destroy(debugger);

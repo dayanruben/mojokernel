@@ -7,7 +7,7 @@ How the Mojo REPL works under the hood, and how each engine exploits it.
 Mojo doesn't have a standalone interpreter. All Mojo code execution -- including the REPL -- happens through LLDB's expression evaluation infrastructure. When you run `mojo repl`, it:
 
 1. Initializes LLDB via `SBDebugger::Initialize()`
-2. Loads `libMojoLLDB.dylib` (Modular's LLDB plugin that adds Mojo language support)
+2. Loads `libMojoLLDB.dylib` (Modular's LLDB plugin that adds Mojo language support) (or libMojoLLDB.so on linux)
 3. Creates a target from `mojo-repl-entry-point` (a small binary with a `mojo_repl_main` breakpoint)
 4. Launches the target and stops at the breakpoint
 5. Calls `SBDebugger::RunREPL(mojo_lang)` to enter interactive REPL mode
@@ -40,71 +40,80 @@ def __mojo_repl_expr_impl__(mut __mojo_repl_arg: __mojo_repl_context__,
 
 The context struct accumulates fields as you declare variables. Each expression receives the accumulated context as a parameter, giving it access to all previously declared variables. LLDB's `AddPersistentVariable` stores the compiled results across evaluations.
 
-This mechanism is triggered by a single boolean flag on LLDB's internal `EvaluateExpressionOptions` class: `m_repl = true`.
+This mechanism is triggered by using the internal `Target::GetREPL()` + `IOHandlerInputComplete()`.
 
-## The SetREPLEnabled discovery
+## The Target::GetREPL discovery
 
-LLDB's public SB API (`SBExpressionOptions`) does not expose any REPL mode flag. The Swift Jupyter kernel (`links/swift-jupyter/`) uses `SetREPLMode(True)` -- but that's a Swift-specific addition to the SB API that doesn't exist in Modular's LLDB.
+LLDB's public SB API (SBTarget) does not expose `GetREPL()` method
 
-However, the internal LLDB header (`lldb/Target/Target.h`) defines:
+However, the internal `lldb/Target/Target.h` exposes `Target::GetREPL()` which returns a REPL object. Routing code through this object via `IOHandlerInputComplete()` gives full variable persistence (likely because it uses the same REPL instance across calls)
 
-```cpp
-class EvaluateExpressionOptions {
-    // ...
-    bool m_repl = false;
-    // ...
-    bool GetREPLEnabled() const { return m_repl; }
-    void SetREPLEnabled(bool b) { m_repl = b; }
-};
-```
-
-And `SBExpressionOptions` wraps this with a single member:
+Because `SBTarget` wraps the internal Target with a single member
 
 ```cpp
-class SBExpressionOptions {
-    // ...
+class SBTarget {
 private:
-    std::unique_ptr<lldb_private::EvaluateExpressionOptions> m_opaque_up;
+    lldb::TargetSP m_opaque_sp;
 };
 ```
 
-The C++ server accesses the internal options via `reinterpret_cast`:
+Then the C++ server accesses the internal Target via `reinterpret_cast`
 
 ```cpp
-static lldb_private::EvaluateExpressionOptions& get_internal(SBExpressionOptions &opts) {
-    return **reinterpret_cast<std::unique_ptr<lldb_private::EvaluateExpressionOptions>*>(&opts);
+static lldb::TargetSP get_target_sp(lldb::SBTarget &target) {
+    return *reinterpret_cast<lldb::TargetSP *>(&target);
 }
 ```
 
-This works because `SBExpressionOptions` has exactly one data member (the `unique_ptr`), so its address is the address of that member. We reinterpret it, dereference the `unique_ptr`, and call `SetREPLEnabled(true)`.
-
-With this flag set, `SBTarget::EvaluateExpression()` activates the context struct mechanism and variables persist across calls.
-
-Note: `EvaluateExpression` with Mojo always reports `GetError().Fail() == true` with the message "unknown error", even on success. Real errors have actual error messages. The server distinguishes them by checking if the error message is literally "unknown error".
+This works because SBTarget has exactly one data member, so its address is the address of `m_opaque_sp`. We reinterpret it and dereference to get the `TargetSP`, then call `Target::GetREPL()` on it
 
 ## C++ server engine (`server/repl_server.cpp`)
 
 The server is a single-process C++ binary:
 
-1. **Startup**: Initialize LLDB, load `libMojoLLDB.dylib`, create target from `mojo-repl-entry-point`, set breakpoint on `mojo_repl_main`, launch and stop at breakpoint.
+1. **Startup**: Initialize LLDB, load `libMojoLLDB.dylib`/`.so`, create target from `mojo-repl-entry-point`, set breakpoint on `mojo_repl_main`, launch and stop at breakpoint.
 
-2. **Configure expression options**:
+2. **Create the LLDB REPL object**:
    ```cpp
-   SBExpressionOptions opts;
-   opts.SetLanguage(mojo_lang);        // language type 51
-   opts.SetUnwindOnError(false);
-   opts.SetGenerateDebugInfo(true);
-   opts.SetTimeoutInMicroSeconds(0);   // no timeout
-   get_internal(opts).SetREPLEnabled(true);  // the key flag
+   auto mojo_lang = SBLanguageRuntime::GetLanguageTypeFromString("mojo");
+   debugger.SetREPLLanguage(mojo_lang);
+
+   TargetSP target_sp = get_target_sp(target);
+   lldb_private::Status repl_err;
+   REPLSP repl = target_sp->GetREPL(repl_err, mojo_lang, nullptr, true);
+   IOHandlerSP io_handler = repl->GetIOHandler();
    ```
 
-3. **JSON protocol loop**: Read JSON from stdin, call `target.EvaluateExpression(code, opts)`, drain stdout/stderr from the LLDB process, return JSON on stdout.
+   `SBTarget` does not expose `Target::GetREPL()`, so the server unwraps the internal `TargetSP` from `SBTarget` with the single-member layout assumption described above.
 
-4. **Stdout capture**: When Mojo code calls `print()`, the output goes to the LLDB process's stdout. We drain it with `SBProcess::GetSTDOUT()` after each evaluation.
+3. **JSON protocol loop**: Read JSON from stdin, route execute requests through the persistent REPL instance, and return JSON on stdout.
+
+   ```cpp
+   std::string mutable_code = code;
+   repl->IOHandlerInputComplete(*io_handler, mutable_code);
+   ```
+
+   This uses LLDB's real Mojo REPL path, so `var`/`let` declarations persist across execute requests.
+
+4. **Output capture**: There are two output channels to collect after each execute request:
+
+   - **Target process stdout/stderr**: output produced by running Mojo code, such as `print(...)`. The server drains this with `SBProcess::GetSTDOUT()` and `SBProcess::GetSTDERR()`.
+
+   - **Debugger stdout/stderr**: output produced by LLDB's REPL machinery, especially compiler diagnostics, parse errors, and other REPL messages. The server redirects the debugger's output and error file handles to temporary files, then reads and truncates those files after each request.
+
+   The JSON response combines both sources so notebook users see normal program output and compile/runtime diagnostics from the same execute request.
 
 ### Build requirements
 
-The server includes `lldb/Target/Target.h` (LLDB internal header) which pulls in LLVM types. This requires linking against brew's LLVM support libraries in addition to Modular's liblldb:
+The main server uses LLDB's public SB API plus a few LLDB internal headers for the REPL path:
+
+```cpp
+#include <lldb/Target/Target.h>      // Target::GetREPL()
+#include <lldb/Expression/REPL.h>    // REPLSP, IOHandlerInputComplete()
+#include <lldb/Utility/Status.h>     // lldb_private::Status
+```
+
+Because these headers expose LLDB/LLVM private types, `server/repl_server.cpp` must be built against matching LLDB headers and linked against Modular's `liblldb` plus LLVM support libraries:
 
 ```
 -llldb23.0.0git     (from Modular)
@@ -199,10 +208,10 @@ This is a C++ version of the pexpect approach. It:
 4. Communicates with the REPL through the PTY master using the same prompt detection and output parsing as the pexpect engine
 5. Exposes the same JSON protocol on stdin/stdout as the main server
 
-This exists as a fallback. If Modular changes the internal layout of `EvaluateExpressionOptions` (breaking the `reinterpret_cast`), the PTY server will still work because it uses only public LLDB APIs.
+This exists as a fallback. If Modular changes the internal `SBTarget` layout or the `Target::GetREPL()` / `REPL::IOHandlerInputComplete()` APIs used by the main server, the PTY server should still work because it drives `SBDebugger::RunREPL()` through public LLDB APIs and terminal I/O.
 
 ## Why not HandleCommand?
 
 The original server used `ci.HandleCommand("expression -l mojo -- " + code)`. This works for `fn`/`struct`/`trait` definitions (which compile into the persistent LLDB module) but NOT for `var`/`let` declarations. Each `HandleCommand` creates a new expression scope -- variables are local to that scope and disappear after evaluation.
 
-The `m_repl` flag changes this by telling the expression evaluator to use the REPL's context struct mechanism, which is what makes `EvaluateExpression` work like the interactive REPL.
+The `Target::GetREPL()` path fixes this by reusing LLDB's actual Mojo REPL object across requests. That REPL object owns the accumulated context struct, so each call through `REPL::IOHandlerInputComplete()` sees declarations from previous cells, matching the behavior of the interactive Mojo REPL.

@@ -20,8 +20,9 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - os: macos-14
-            llvm_install: brew install llvm
+            llvm_install: brew install llvm lldb
             llvm_include: /opt/homebrew/opt/llvm/include
+            lldb_include: /opt/homebrew/opt/lldb/include
             llvm_lib: /opt/homebrew/opt/llvm/lib
           - os: ubuntu-22.04
             llvm_install: >-
@@ -29,6 +30,7 @@ jobs:
               echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main" | sudo tee /etc/apt/sources.list.d/llvm-18.list &&
               sudo apt-get update && sudo apt-get install -y llvm-18-dev liblldb-18-dev
             llvm_include: /usr/lib/llvm-18/include
+            lldb_include: /usr/lib/llvm-18/include
             llvm_lib: /usr/lib/llvm-18/lib
     runs-on: ${{ matrix.os }}
     steps:
@@ -52,11 +54,11 @@ jobs:
         run: |
           ${{ matrix.llvm_install }}
           echo "--- Verify headers ---"
-          ls ${{ matrix.llvm_include }}/lldb/Target/Target.h
-          ls ${{ matrix.llvm_include }}/lldb/API/SBDebugger.h
+          ls ${{ matrix.lldb_include }}/lldb/Target/Target.h
+          ls ${{ matrix.lldb_include }}/lldb/API/SBDebugger.h
 
       - name: Build server
-        run: LLVM_INCLUDE=${{ matrix.llvm_include }} LLVM_LIB=${{ matrix.llvm_lib }} uv run tools/build_server.sh
+        run: LLVM_INCLUDE=${{ matrix.llvm_include }} LLDB_INCLUDE=${{ matrix.lldb_include }} LLVM_LIB=${{ matrix.llvm_lib }} uv run tools/build_server.sh
 
       - name: Verify binary
         run: |

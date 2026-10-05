@@ -33,12 +33,13 @@ else
     fi
     LLDB_LIB=$(basename "${libs[0]}" | sed 's/^lib//;s/\.so$//')
 fi
+LLDB_INCLUDE="${LLDB_INCLUDE:-$LLVM_INCLUDE}"
 
 echo "MODULAR_ROOT=$MODULAR_ROOT"
 echo "LLDB_LIB=$LLDB_LIB"
 
 mkdir -p build
-CFLAGS="-std=c++17 -I$LLVM_INCLUDE"
+CFLAGS="-std=c++17 -I$LLDB_INCLUDE -I$LLVM_INCLUDE"
 BASE_LD="-L$MODULAR_ROOT/lib -l$LLDB_LIB"
 
 c++ $CFLAGS server/repl_server.cpp $BASE_LD -L$LLVM_LIB -lLLVMSupport -lLLVMDemangle -o build/mojo-repl-server

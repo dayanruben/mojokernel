@@ -38,7 +38,7 @@ MOJO_KERNEL_ENGINE=pexpect jupyter lab
 To build the C++ server yourself (e.g. for development or an unsupported platform):
 
 ```bash
-brew install llvm   # macOS; on Linux: apt install llvm-18-dev liblldb-18-dev
+brew install llvm lldb   # macOS; on Linux: apt install llvm-18-dev liblldb-18-dev
 tools/build_server.sh
 ```
 

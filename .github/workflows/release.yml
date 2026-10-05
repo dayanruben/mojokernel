@@ -121,7 +121,7 @@ jobs:
           path: dist/*.tar.gz
 
   publish:
-    if: inputs.publish
+    if: inputs.publish && github.repository == 'AnswerDotAI/mojokernel'
     needs: [build, build-sdist]
     runs-on: ubuntu-latest
     environment: pypi
